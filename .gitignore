@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local data (benchmark exports, session logs, reference configs) -- kept out of git
+data/

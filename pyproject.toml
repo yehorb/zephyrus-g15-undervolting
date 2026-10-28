@@ -1,0 +1,7 @@
+[project]
+name = "undervolting"
+version = "0.1.0"
+description = "Undervolting an RTX 3080 Laptop GPU with LACT: benchmark data, gaming session logs and analysis tools"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []

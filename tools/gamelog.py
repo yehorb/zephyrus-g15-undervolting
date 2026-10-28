@@ -4,7 +4,7 @@
 Stops with Ctrl+C, or by itself once the GPU has been idle for --idle-stop minutes
 after the game ran (i.e. you closed the game and walked away).
 
-Writes logs/<start>_<lact-profile>[_<label>]/ next to this tools/ folder:
+Writes data/logs/<start>_<lact-profile>[_<label>]/ (git-ignored):
   meta.json   profile settings, driver, kernel, platform profile at start
   lact.csv    LACT stats + laptop sensors, every --interval seconds
   nvsmi.csv   nvidia-smi: power limit, utilization, clock event (throttle) reasons
@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lact_api import call
 
 NV = "10DE:249C-1043:1622-0000:01:00.0"
-ROOT = Path(__file__).resolve().parent.parent / "logs"
+ROOT = Path(__file__).resolve().parent.parent / "data" / "logs"
 IDLE_BELOW = 30  # busy %; a running game (even in menus) stays above this
 NVSMI_FIELDS = (
     "timestamp,pstate,utilization.gpu,utilization.memory,power.draw.average,"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarize a gamelog.py session, plus any MangoHud logs recorded during it.
 
-Usage: uv run tools/analyze_session.py [logs/<session-dir>]   (default: newest)
+Usage: uv run tools/analyze_session.py [data/logs/<session-dir>]   (default: newest)
        uv run tools/analyze_session.py <dir> <dir> ...      (compare sessions)
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-LOGS = Path(__file__).resolve().parent.parent / "logs"
+LOGS = Path(__file__).resolve().parent.parent / "data" / "logs"
 LOAD = 90  # busy % at which a sample counts as GPU-bound
 BOGUS_POWER_W = 200  # the NVIDIA sensor occasionally reports ~750 W at idle
 ACTIVE = 30  # busy % that marks the game running; idle before/after is trimmed

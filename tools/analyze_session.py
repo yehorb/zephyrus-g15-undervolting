@@ -111,8 +111,16 @@ def by_limit(lact, nv):
         gpu_temp=("temp_gpu", "mean"),
         cpu_temp=("cpu_tctl", "mean"),
         cpu_W=("apu_power_w", "mean"),
+        **cpu_cols(
+            gb, cpu_util=("cpu_util_pct", "mean"), cpu_mhz=("cpu_mhz_avg", "mean")
+        ),
     )
     return out[out.minutes >= 0.5]
+
+
+def cpu_cols(df, **cols):
+    """Aggregations for the CPU columns gamelog.py records (absent in older sessions)."""
+    return {k: v for k, v in cols.items() if v[0] in df.columns}
 
 
 def compare(dirs):
@@ -158,10 +166,24 @@ def main():
     )
     if lact.profile.nunique() > 1:
         print("Profile changes:", lact.groupby("profile").size().to_dict())
+    if "cpu_governor" in meta:
+        print(
+            f"CPU: governor {meta['cpu_governor']}, EPP {meta['cpu_epp']}, boost {meta['cpu_boost']}"
+            f" | asusd EPP for {meta['platform_profile']}: "
+            f"{meta['asusd_epp'].get(f'profile_{meta["platform_profile"]}_epp', '-')}"
+        )
+        for c in meta["fan_curves"]:
+            print(f"Fan curve {c}")
     if (lact.platform_profile != meta["platform_profile"]).any() or (
         lact.ac_online != 1
     ).any():
         print("WARNING: platform profile or AC state changed during the session")
+    for c in ("cpu_governor", "cpu_epp", "cpu_boost"):
+        if c in lact.columns and lact[c].nunique() > 1:
+            print(
+                f"WARNING: {c} changed during the session:",
+                lact[c].value_counts().to_dict(),
+            )
 
     xids = [x for x in (d / "xid.log").read_text().splitlines() if "Xid" in x]
     print(f"Xid errors: {len(xids)}")
@@ -196,6 +218,15 @@ def main():
         )
         print(
             f"memory 6001 MHz {pct(gb.vram_mhz == 6001)} (P0), 5501 {pct(gb.vram_mhz == 5501)} (P3)"
+        )
+        print(
+            f"CPU    power mean {gb.apu_power_w.mean():.1f} W, p95 {gb.apu_power_w.quantile(0.95):.1f}"
+            + (
+                f" | load mean {gb.cpu_util_pct.mean():.0f}% | clock mean "
+                f"{gb.cpu_mhz_avg.mean():.0f}, fastest core p95 {gb.cpu_mhz_max.quantile(0.95):.0f} MHz"
+                if "cpu_util_pct" in gb.columns
+                else ""
+            )
         )
         nv_gb = nv[nv["utilization.gpu"] >= LOAD]
         print(
@@ -272,6 +303,9 @@ def main():
         hot=("temp_hotspot", "max"),
         cpu=("cpu_tctl", "max"),
         apuW=("apu_power_w", "mean"),
+        **cpu_cols(
+            lact, cpu_util=("cpu_util_pct", "mean"), cpuMHz=("cpu_mhz_avg", "mean")
+        ),
         pcap=("power_cap", "mean"),
         therm=("thermal", "sum"),
     )

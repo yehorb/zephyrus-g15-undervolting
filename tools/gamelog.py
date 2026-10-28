@@ -5,8 +5,8 @@ Stops with Ctrl+C, or by itself once the GPU has been idle for --idle-stop minut
 after the game ran (i.e. you closed the game and walked away).
 
 Writes data/logs/<start>_<lact-profile>[_<label>]/ (git-ignored):
-  meta.json   profile settings, driver, kernel, platform profile at start
-  lact.csv    LACT stats + laptop sensors, every --interval seconds
+  meta.json   profile settings, driver, kernel, platform/CPU power settings, fan curves at start
+  lact.csv    LACT stats + laptop sensors + CPU load/clocks/settings, every --interval seconds
   nvsmi.csv   nvidia-smi: power limit, utilization, clock event (throttle) reasons
   xid.log     NVIDIA kernel messages (Xid = GPU fault) seen during the session
 
@@ -56,14 +56,52 @@ def hwmon(name):
 
 
 K10, AMDGPU, ASUS = hwmon("k10temp"), hwmon("amdgpu"), hwmon("asus")
+CPUFREQ = sorted(Path("/sys/devices/system/cpu").glob("cpu[0-9]*/cpufreq"))
+
+
+def output(*cmd):
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, check=False
+        ).stdout.strip()
+    except OSError:
+        return ""
+
+
+def cpu_settings():
+    """Governor, EPP and boost; amd-pstate keeps them the same on every core."""
+    p = CPUFREQ[0] if CPUFREQ else Path("/nonexistent")
+    return {
+        "cpu_governor": read(p / "scaling_governor"),
+        "cpu_epp": read(p / "energy_performance_preference"),
+        "cpu_boost": read("/sys/devices/system/cpu/cpufreq/boost"),
+    }
+
+
+class CpuLoad:
+    """Whole-CPU utilization since the previous call, from /proc/stat."""
+
+    def __init__(self):
+        self.prev = self.times()
+
+    @staticmethod
+    def times():
+        v = [int(x) for x in read("/proc/stat").splitlines()[0].split()[1:]]
+        return sum(v), v[3] + v[4]  # total, idle + iowait
+
+    def pct(self):
+        (total, idle), (t0, i0) = self.times(), self.prev
+        self.prev = total, idle
+        return round(100 * (1 - (idle - i0) / (total - t0)), 1) if total > t0 else None
 
 
 def current_profile():
     return call("list_profiles", include_state=False)["current_profile"] or "Default"
 
 
-def sample():
+def sample(cpu_load):
     s = call("device_stats", id=NV)
+    mhz = [int(read(p / "scaling_cur_freq", 0)) / 1000 for p in CPUFREQ]
     clk, temps = s["clockspeed"], s["temps"]
     sens = clk.get("sensors", {})
     t = lambda k: (temps.get(k) or {}).get("current")
@@ -93,6 +131,10 @@ def sample():
         "throttle": json.dumps(s.get("throttle_info") or {}, separators=(",", ":")),
         "cpu_tctl": int(read(K10 / "temp1_input", 0)) / 1000 if K10 else None,
         "apu_power_w": int(read(AMDGPU / "power1_input", 0)) / 1e6 if AMDGPU else None,
+        "cpu_util_pct": cpu_load.pct(),
+        "cpu_mhz_avg": round(sum(mhz) / len(mhz)) if mhz else None,
+        "cpu_mhz_max": round(max(mhz)) if mhz else None,
+        **cpu_settings(),
         "fan1_rpm": read(ASUS / "fan1_input") if ASUS else None,
         "fan2_rpm": read(ASUS / "fan2_input") if ASUS else None,
         "platform_profile": read("/sys/firmware/acpi/platform_profile"),
@@ -133,16 +175,14 @@ def main():
     )
     out.mkdir(parents=True)
 
-    driver = subprocess.run(
-        [
-            "nvidia-smi",
-            "--query-gpu=driver_version,vbios_version",
-            "--format=csv,noheader",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.strip()
+    driver = output(
+        "nvidia-smi",
+        "--query-gpu=driver_version,vbios_version",
+        "--format=csv,noheader",
+    )
+    asusd_epp = dict(
+        re.findall(r"(profile_\w+_epp): (\w+)", read("/etc/asusd/asusd.ron"))
+    )
     (out / "meta.json").write_text(
         json.dumps(
             {
@@ -157,6 +197,11 @@ def main():
                 "kernel": platform.release(),
                 "platform_profile": read("/sys/firmware/acpi/platform_profile"),
                 "ac_online": read("/sys/class/power_supply/AC0/online"),
+                **cpu_settings(),
+                "asusd_epp": asusd_epp,
+                "fan_curves": output(
+                    "asusctl", "fan-curve", "--get-enabled"
+                ).splitlines(),
             },
             indent=1,
         )
@@ -221,10 +266,11 @@ def main():
         )
         n, t0, writer = 0, time.time(), None
         last_busy, was_busy = time.monotonic(), False
+        cpu_load = CpuLoad()
         while not stop:
             tick = time.monotonic()
             try:
-                row = sample()
+                row = sample(cpu_load)
             # daemon restart, GPU reload, odd payload -- keep going
             except (OSError, RuntimeError, ValueError, KeyError, TypeError) as e:
                 print(f"sample failed: {e}", file=sys.stderr)
